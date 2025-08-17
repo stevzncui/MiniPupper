@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # traffic_color_go.py
-# GREEN => go, YELLOW => slow, RED/none => stop (HSV masks).
-# Publishes ROS 2 Twist to /cmd_vel and logs while moving. Works headless.
+# GREEN = go, YELLOW = slow, RED = stop 
+
 
 import argparse, time
 import cv2
@@ -41,16 +41,16 @@ class ColorGo(Node):
         if width > 0:  self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width)
         if height > 0: self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
-        # Morph kernel
+        # kernal
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
 
-        # HSV ranges (tweak if your lighting differs)
+        # ranges of hsv
         self.green_lower  = np.array([35,  80,  60]); self.green_upper  = np.array([85, 255, 255])
         self.yellow_lower = np.array([20, 100, 100]); self.yellow_upper = np.array([35, 255, 255])
         self.red1_lower   = np.array([0,  100,  70]); self.red1_upper   = np.array([10, 255, 255])
         self.red2_lower   = np.array([170,100,  70]); self.red2_upper   = np.array([180,255,255])
 
-        # ~20 Hz loop
+        #loop
         self.timer = self.create_timer(0.05, self.loop_once)
 
     def loop_once(self):
@@ -67,7 +67,7 @@ class ColorGo(Node):
         mask_r = cv2.inRange(hsv, self.red1_lower,   self.red1_upper) \
                | cv2.inRange(hsv, self.red2_lower,   self.red2_upper)
 
-        # Clean up masks
+        # clean the masks up
         mask_g = cv2.morphologyEx(mask_g, cv2.MORPH_OPEN,  self.kernel, iterations=1)
         mask_g = cv2.morphologyEx(mask_g, cv2.MORPH_CLOSE, self.kernel, iterations=1)
         mask_y = cv2.morphologyEx(mask_y, cv2.MORPH_OPEN,  self.kernel, iterations=1)
@@ -80,7 +80,7 @@ class ColorGo(Node):
         frac_yel   = float(np.count_nonzero(mask_y)) / max(1, total_px)
         frac_red   = float(np.count_nonzero(mask_r)) / max(1, total_px)
 
-        # Decide raw observation
+        # observation
         if frac_red >= self.min_area:
             obs = 'RED'
         elif frac_yel >= self.min_area:
@@ -90,10 +90,10 @@ class ColorGo(Node):
         else:
             obs = 'NONE'
 
-        # Debounce by counting consecutive frames for the top observation
+        # frame counting
         for k in self.counts: self.counts[k] = self.counts[k] + 1 if k == obs else 0
 
-        # State transitions (priority: RED > YELLOW > GREEN > NONE)
+        # transitions in state
         new_state = self.state
         if self.counts['RED'] >= self.consecutive:
             new_state = 'STOP'
@@ -108,7 +108,6 @@ class ColorGo(Node):
             self.state = new_state
             self.get_logger().info(f"STATE -> {self.state} (g={frac_green:.3f} y={frac_yel:.3f} r={frac_red:.3f})")
 
-        # Actuate
         if self.state == 'GO':
             self.move_robot(self.go_speed, say='GREEN')
         elif self.state == 'SLOW':
@@ -116,7 +115,6 @@ class ColorGo(Node):
         else:
             self.stop_robot()
 
-        # Optional preview (needs X forwarding)
         if self.show:
             overlay = frame.copy()
             cv2.putText(overlay, f"State: {self.state}  g={frac_green:.3f} y={frac_yel:.3f} r={frac_red:.3f}",
