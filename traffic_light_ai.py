@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# traffic_color_go.py
 # GREEN = go, YELLOW = slow, RED = stop 
 
 
@@ -32,7 +30,7 @@ class ColorGo(Node):
         self.log_interval = float(log_interval)
         self.last_log = 0.0
 
-        # Camera (prefer V4L2 for headless)
+        # camera
         self.cap = cv2.VideoCapture(cam_index, cv2.CAP_V4L2)
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(cam_index)
