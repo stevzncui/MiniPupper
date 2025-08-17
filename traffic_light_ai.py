@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# GREEN = go, YELLOW = slow, RED = stop 
-# Publishes ROS 2 Twist to /cmd_vel and logs while moving
+# traffic_color_go.py
+# GREEN => go, YELLOW => slow, RED/none => stop (HSV masks).
+# Publishes ROS 2 Twist to /cmd_vel and logs while moving. Works headless.
 
 import argparse, time
 import cv2
@@ -13,7 +14,7 @@ from geometry_msgs.msg import Twist
 class ColorGo(Node):
     def __init__(self, cam_index=0, topic='/cmd_vel',
                  go_speed=0.15, slow_speed=0.05,
-                 show=False, min_area=0.003,        
+                 show=False, min_area=0.003,        # smaller default to catch small/distant lights
                  consecutive=5, width=640, height=480,
                  log_interval=0.5):
         super().__init__('traffic_color_controller')
@@ -24,14 +25,14 @@ class ColorGo(Node):
         self.show = bool(show)
         self.min_area = float(min_area)
         self.consecutive = int(consecutive)
-        self.state = 'STOP'  
+        self.state = 'STOP'   # 'GO' | 'SLOW' | 'STOP'
         self.last_state = self.state
         self.counts = {'GREEN':0, 'YELLOW':0, 'RED':0, 'NONE':0}
         self.last_publish = 0.0
         self.log_interval = float(log_interval)
         self.last_log = 0.0
 
-        #cam
+        # Camera (prefer V4L2 for headless)
         self.cap = cv2.VideoCapture(cam_index, cv2.CAP_V4L2)
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(cam_index)
@@ -40,7 +41,7 @@ class ColorGo(Node):
         if width > 0:  self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width)
         if height > 0: self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
-        #kernal morph
+        # Morph kernel
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
 
         # HSV ranges (tweak if your lighting differs)
@@ -49,7 +50,7 @@ class ColorGo(Node):
         self.red1_lower   = np.array([0,  100,  70]); self.red1_upper   = np.array([10, 255, 255])
         self.red2_lower   = np.array([170,100,  70]); self.red2_upper   = np.array([180,255,255])
 
-        #loop 
+        # ~20 Hz loop
         self.timer = self.create_timer(0.05, self.loop_once)
 
     def loop_once(self):
@@ -66,7 +67,7 @@ class ColorGo(Node):
         mask_r = cv2.inRange(hsv, self.red1_lower,   self.red1_upper) \
                | cv2.inRange(hsv, self.red2_lower,   self.red2_upper)
 
-        # clean the masks
+        # Clean up masks
         mask_g = cv2.morphologyEx(mask_g, cv2.MORPH_OPEN,  self.kernel, iterations=1)
         mask_g = cv2.morphologyEx(mask_g, cv2.MORPH_CLOSE, self.kernel, iterations=1)
         mask_y = cv2.morphologyEx(mask_y, cv2.MORPH_OPEN,  self.kernel, iterations=1)
@@ -79,7 +80,7 @@ class ColorGo(Node):
         frac_yel   = float(np.count_nonzero(mask_y)) / max(1, total_px)
         frac_red   = float(np.count_nonzero(mask_r)) / max(1, total_px)
 
-        # observation choice
+        # Decide raw observation
         if frac_red >= self.min_area:
             obs = 'RED'
         elif frac_yel >= self.min_area:
@@ -89,10 +90,10 @@ class ColorGo(Node):
         else:
             obs = 'NONE'
 
-        # counting the frames in the observation
+        # Debounce by counting consecutive frames for the top observation
         for k in self.counts: self.counts[k] = self.counts[k] + 1 if k == obs else 0
 
-        # the transition states red-> yellow-> green
+        # State transitions (priority: RED > YELLOW > GREEN > NONE)
         new_state = self.state
         if self.counts['RED'] >= self.consecutive:
             new_state = 'STOP'
@@ -107,7 +108,7 @@ class ColorGo(Node):
             self.state = new_state
             self.get_logger().info(f"STATE -> {self.state} (g={frac_green:.3f} y={frac_yel:.3f} r={frac_red:.3f})")
 
-
+        # Actuate
         if self.state == 'GO':
             self.move_robot(self.go_speed, say='GREEN')
         elif self.state == 'SLOW':
@@ -115,9 +116,75 @@ class ColorGo(Node):
         else:
             self.stop_robot()
 
+        # Optional preview (needs X forwarding)
         if self.show:
             overlay = frame.copy()
             cv2.putText(overlay, f"State: {self.state}  g={frac_green:.3f} y={frac_yel:.3f} r={frac_red:.3f}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2, cv2.LINE_AA)
             small_g = cv2.resize(mask_g, (0,0), fx=0.25, fy=0.25)
-            small_y = cv2.resize(mask_y, (0,0), fx=0.25, fy=
+            small_y = cv2.resize(mask_y, (0,0), fx=0.25, fy=0.25)
+            small_r = cv2.resize(mask_r, (0,0), fx=0.25, fy=0.25)
+            h, w = small_g.shape
+            overlay[10:10+h, -10-w:-10] = cv2.cvtColor(small_g, cv2.COLOR_GRAY2BGR)
+            overlay[20+h:20+2*h, -10-w:-10] = cv2.cvtColor(small_y, cv2.COLOR_GRAY2BGR)
+            overlay[30+2*h:30+3*h, -10-w:-10] = cv2.cvtColor(small_r, cv2.COLOR_GRAY2BGR)
+            cv2.imshow('Traffic-Color', overlay)
+            if (cv2.waitKey(1) & 0xFF) == 27:
+                rclpy.shutdown()
+
+    def move_robot(self, vx, say: str):
+        now = time.time()
+        if now - self.last_publish >= 0.03:
+            msg = Twist()
+            msg.linear.x = float(vx)
+            msg.angular.z = 0.0
+            self.pub.publish(msg)
+            self.last_publish = now
+            if now - self.last_log >= self.log_interval:
+                print(say, flush=True)
+                self.last_log = now
+
+    def stop_robot(self):
+        self.pub.publish(Twist())  # zeros
+
+    def destroy_node(self):
+        if self.cap and self.cap.isOpened():
+            self.cap.release()
+        if self.show:
+            try: cv2.destroyAllWindows()
+            except: pass
+        super().destroy_node()
+
+def main():
+    parser = argparse.ArgumentParser(description='GREEN=Go, YELLOW=Slow, RED/none=Stop (OpenCV HSV).')
+    parser.add_argument('--camera', type=int, default=0, help='Webcam index')
+    parser.add_argument('--topic', type=str, default='/cmd_vel', help='ROS2 Twist topic')
+    parser.add_argument('--go-speed', type=float, default=0.15, help='Speed on GREEN (m/s)')
+    parser.add_argument('--slow-speed', type=float, default=0.05, help='Speed on YELLOW (m/s)')
+    parser.add_argument('--min-area', type=float, default=0.003, help='Min frame fraction for a color to count')
+    parser.add_argument('--consecutive', type=int, default=5, help='Frames required to confirm a color')
+    parser.add_argument('--show', type=int, default=0, help='Show preview window (0 for SSH)')
+    parser.add_argument('--width', type=int, default=1280, help='Camera width (0=leave default)')
+    parser.add_argument('--height', type=int, default=720, help='Camera height (0=leave default)')
+    parser.add_argument('--log-interval', type=float, default=0.5, help='Seconds between logs while moving')
+    args = parser.parse_args()
+
+    rclpy.init()
+    node = None
+    try:
+        node = ColorGo(cam_index=args.camera, topic=args.topic,
+                       go_speed=args.go_speed, slow_speed=args.slow_speed,
+                       show=bool(args.show), min_area=args.min_area,
+                       consecutive=args.consecutive, width=args.width,
+                       height=args.height, log_interval=args.log_interval)
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
