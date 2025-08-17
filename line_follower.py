@@ -1,10 +1,5 @@
-#!/usr/bin/env python3
-# line_follower.py
-# Follow a BLACK line using a USB webcam (Raspberry Pi) and publish ROS 2 /cmd_vel.
-# Headless-friendly (no GUI). Uses grayscale + adaptive/otsu thresholding.
-#
-# Default: moves forward at --speed, steers with PID on line centroid error.
-# If the line is lost, it stops and slowly rotates to re-acquire.
+# Follow a BLACK line using a USB webcam 
+# If the line is lost, it stops and slowly rotates to find the line again
 
 import argparse, time, math
 import cv2
@@ -54,14 +49,14 @@ class BlackLineFollower(Node):
                  best_effort, search_ang, lost_frames_limit):
         super().__init__('black_line_follower')
 
-        # QoS
+        # qos
         qos = QoSProfile(depth=10)
         if best_effort:
             qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
 
         self.pub = self.create_publisher(Twist, topic, qos)
 
-        # Params
+        # paramaters defined
         self.speed = float(speed)
         self.max_ang = float(max_ang)
         self.roi_hf = float(roi_height_frac)
@@ -71,13 +66,13 @@ class BlackLineFollower(Node):
         self.search_ang = float(search_ang)
         self.lost_frames_limit = int(lost_frames_limit)
 
-        # PID on normalized horizontal error (left negative, right positive)
+        # error
         self.pid = PID(kp=kp, ki=ki, kd=kd, out_min=-1.0, out_max=1.0)
 
         self.lost_count = 0
         self.last_publish = 0.0
 
-        # Camera (prefer V4L2 on headless)
+        # camera
         self.cap = cv2.VideoCapture(cam_index, cv2.CAP_V4L2)
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(cam_index)
@@ -86,10 +81,10 @@ class BlackLineFollower(Node):
         if width > 0:  self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  width)
         if height > 0: self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
-        # Loop ~20 Hz
+        # loop
         self.timer = self.create_timer(0.05, self.loop_once)
 
-        # Morph kernel
+        # kernal
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
 
         self.get_logger().info('Black line follower started.')
@@ -105,26 +100,23 @@ class BlackLineFollower(Node):
         roi_h = max(8, int(self.roi_hf * H))
         roi = frame[H - roi_h : H, :]
 
-        # --- Preprocess ---
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         gray = cv2.GaussianBlur(gray, (5,5), 0)
 
-        # Threshold to get BLACK line as WHITE blob (invert)
+        # change the background color of the line to white
         if self.thresh_mode == 'auto':
-            # Adaptive threshold works well under uneven lighting
             bw = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
                                        cv2.THRESH_BINARY_INV, 21, 10)
         elif self.thresh_mode == 'otsu':
             _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         else:
-            # fixed integer threshold
             t = int(self.thresh_mode)
             _, bw = cv2.threshold(gray, t, 255, cv2.THRESH_BINARY_INV)
 
         bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, self.kernel, iterations=1)
         bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, self.kernel, iterations=1)
 
-        # --- Find largest contour (assume it's the line) ---
+        # used to find the line
         cnts, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         best = None
         best_area = 0
