@@ -9,7 +9,7 @@ Yellow → the robot slows down
 Red or no light → the robot stops
 
 It publishes velocity commands on the ROS 2 topic /cmd_vel.
-You can run it headless over SSH, or enable a preview window to see the camera feed.
+
 
 2. Black Line Follower (black_line_follower.py)
 
@@ -21,7 +21,8 @@ If it finds the line, it steers the robot to stay centered.
 
 If it loses the line, it should stop and slowly rotate to search for it again.
 
-Note: At the moment, this script is not working correctly. It still needs fixes before it can reliably follow a line.
+Note: At the moment, this script is not working correctly. 
+
 
 3. Gemini Text-to-Speech Loop (gemini_tts.py)
 
