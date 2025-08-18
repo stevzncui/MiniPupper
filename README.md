@@ -1,14 +1,14 @@
 1. Traffic Light Color Controller (traffic_color_go.py)
 
-This script uses a USB webcam to detect traffic light colors (green, yellow, red) and control the robot:
+  This script uses a USB webcam to detect traffic light colors (green, yellow, red) and control the robot:
 
-Green → the robot moves forward
+  Green → the robot moves forward
 
-Yellow → the robot slows down
+  Yellow → the robot slows down
+  
+  Red or no light → the robot stops
 
-Red or no light → the robot stops
-
-It publishes velocity commands on the ROS 2 topic /cmd_vel.
+  It publishes velocity commands on the ROS 2 topic /cmd_vel.
 
 
 2. Black Line Follower (black_line_follower.py)
